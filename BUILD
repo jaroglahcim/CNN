@@ -1,0 +1,16 @@
+load("//tensorflow:tensorflow.bzl", "tf_cc_binary")
+
+tf_cc_binary(
+    name = "my_project1",
+    srcs = ["main.cc"],
+    deps = ["//tensorflow/core:tensorflow",
+            "//tensorflow/cc:cc_ops",
+            "//tensorflow/cc:client_session",
+            "//tensorflow/core:core_cpu",
+            "//tensorflow/core:framework",
+            "//tensorflow/core:framework_internal",
+            "//tensorflow/core:lib",
+            "//tensorflow/core:protos_all_cc"
+
+    ]
+)
