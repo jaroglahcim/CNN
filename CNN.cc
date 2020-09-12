@@ -265,7 +265,7 @@ Input CNN::AddConvolutionLayer(string index, Scope scope, int in_channels, int o
     return MaxPool(scope.WithOpName("Pool"), relu, {1, 2, 2, 1}, {1, 2, 2, 1}, "SAME");
 }
 
-//function which returns initialization according to Xavier method 
+//function which returns initialization according to Xavier method ?
 Input CNN::XavierInitialization(Scope scope, int in_channels, int out_channels, int filter_height=0, int filter_width=0){
     float std;
     Tensor t;
@@ -293,19 +293,10 @@ Input CNN::XavierInitialization(Scope scope, int in_channels, int out_channels, 
     return Multiply(scope, Sub(scope, rand, 0.5f), std*2.f);
 }
 
-Status CNN::CreateGraphForCNN(int filter_height, int filter_width){
-    
-    return Status::OK();
-}
-
-
-
-
-
 //function which creates a single dense layer graph; works largely analogously to AddConvolutionLayer function
-//fifth arg: bool bActivation determines if ReLU activation will be performed or should binary activation be used
+//fifth arg: bool relu_activation determines if ReLU activation will be performed or should binary activation be used
 //ReLU is used on all dense layers besides the last one
-Input CNN::AddDenseLayer(string index, Scope scope, int in_units, int out_units, bool bActivation, Input input)
+Input CNN::AddDenseLayer(string index, Scope scope, int in_units, int out_units, bool relu_activation, Input input)
 {
     //map_vars holds weights for input multiplication and bias to add
     TensorShape sp = {in_units, out_units};
@@ -321,12 +312,102 @@ Input CNN::AddDenseLayer(string index, Scope scope, int in_units, int out_units,
     //here multiplication and adding bias is performed
     auto dense = Add(scope.WithOpName("Dense_b"), MatMul(scope.WithOpName("Dense_w"), input, map_vars["W"+index]), map_vars["B"+index]);
     //in the last dense layer ReLU activation is skipped
-    if(bActivation)
+    if(relu_activation)
         return Relu(scope.WithOpName("Relu"), dense);
     else
         return dense;
 }
 
+
+//function which creates full CNN architecture graph
+//
+Status CNN::CreateGraphForCNN(int filter_height, int filter_width){
+    //input batch of images, it's size in our example is batch_sizex150x150x3
+    //again starting with a placeholder - we again keep this variable stored in object, so as to avoid trouble with passing it later 
+    input_batch_var = Placeholder(net_root.WithOpName("input_batch"), DT_FLOAT);
+    //drop_rate and skip_drop are used for dropout technique used further down
+    drop_rate_var = Placeholder(net_root.WithOpName("drop_rate"), DT_FLOAT);
+    skip_drop_var = Placeholder(net_root.WithOpName("skip_drop"), DT_FLOAT);
+    
+    //First Layer:
+    //Start Conv+Maxpool No 1. filter size 3x3x3 and we have 32 filters
+    Scope scope_conv1 = net_root.NewSubScope("Conv1_layer");
+    int in_channels = image_channels;
+    int out_channels = 32;
+    auto pool1 = AddConvolutionLayer("1", scope_conv1, in_channels, out_channels, filter_height, filter_width, input_batch_var);
+    //controlling size
+    int new_width = ceil((float)image_width / 2); //max pool is reducing the size by factor of 2
+    int new_height = ceil((float)image_height / 2); //max pool is reducing the size by factor of 2
+
+    //Conv+Maxpool No 2, filter size still 3x3x3; usually filter count increases as we go through layers, here there are 64 filters
+    Scope scope_conv2 = net_root.NewSubScope("Conv2_layer");
+    in_channels = out_channels;
+    out_channels = 64;
+    auto pool2 = AddConvolutionLayer("2", scope_conv2, in_channels, out_channels, filter_height, filter_width, pool1);
+    new_width = ceil((float)new_width / 2);
+    new_height = ceil((float)new_height / 2);
+
+    //Conv+Maxpool No 3
+    Scope scope_conv3 = net_root.NewSubScope("Conv3_layer");
+    in_channels = out_channels;
+    out_channels = 128;
+    auto pool3 = AddConvolutionLayer("3", scope_conv3, in_channels, out_channels, filter_height, filter_width, pool2);
+    new_width = ceil((float)new_width / 2);
+    new_height = ceil((float)new_height / 2);
+
+
+    //Conv+Maxpool No 4
+    Scope scope_conv4 = net_root.NewSubScope("Conv4_layer");
+    in_channels = out_channels;
+    out_channels = 128;
+    auto pool4 = AddConvolutionLayer("4", scope_conv4, in_channels, out_channels, filter_height, filter_width, pool3);
+    new_width = ceil((float)new_width / 2);
+    new_height = ceil((float)new_height / 2);
+
+
+    //Flatten
+    //reshaping data so that it will be stored in a 2d tensor - batch number and data, suitable for use in dense layers
+    Scope flatten = net_root.NewSubScope("flat_layer");
+    //calculating flat length of data for use in reshape function 
+    int flat_len = new_width * new_width * out_channels;
+    auto flat = Reshape(flatten, pool4, {-1, flat_len});
+    
+    //Dropout
+    //the most popular regularization technique; in it randomly some neurons are deactivated each iteration during training so that whole
+    //network operates with less dependence on a few neurons afterwards (during validation/prediction), which prevents overfitting
+    //drop_rate_var and skip_drop_var have to be set beforehand to correct values to use
+    //standard uses - drop_rate_var <- 0.5f, skip_drop_var <- 0.f during training,  drop_rate_var <- 1.f, skip_drop_var <- 1.f during validation/prediction
+    //(has to be used in such a cumbersome way because with switch and merge backpropagation is impossible)   
+    Scope dropout = net_root.NewSubScope("Dropout_layer");
+    auto rand = RandomUniform(dropout, Shape(dropout, flat), DT_FLOAT);
+    //binary = floor(rand + (1 - drop_rate) + skip_drop)
+    auto binary = Floor(dropout, Add(dropout, rand, Add(dropout, Sub(dropout, 1.f, drop_rate_var), skip_drop_var)));
+    //when dropping, remaining neurons have values increased by dividing by the drop rate
+    auto after_drop = Multiply(dropout.WithOpName("dropout"), Div(dropout, flat, drop_rate_var), binary);
+
+    //Dense No 1
+    int in_units = flat_len;
+    int out_units = 512;
+    Scope scope_dense1 = net_root.NewSubScope("Dense1_layer");
+    auto relu5 = AddDenseLayer("5", scope_dense1, in_units, out_units, true, after_drop);
+
+    //Dense No 2
+    in_units = out_units;
+    out_units = 256;
+    Scope scope_dense2 = net_root.NewSubScope("Dense2_layer");
+    auto relu6 = AddDenseLayer("6", scope_dense2, in_units, out_units, true, relu5);
+    
+    //Dense No 3
+    in_units = out_units;
+    out_units = 1;
+    Scope scope_dense3 = net_root.NewSubScope("Dense3_layer");
+    //bool relu_activation changes to false - on last layer binary activation is used
+    auto logits = AddDenseLayer("7", scope_dense3, in_units, out_units, false, relu6);
+
+    //sigmoid function for binary classification
+    out_classification = Sigmoid(net_root.WithOpName("output_classes"), logits);
+    return net_root.status();
+}
 
 
 int main(int argc, const char * argv[])

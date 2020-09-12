@@ -24,6 +24,8 @@ class CNN
 
         map<string, Output> map_vars, map_assigns;
         map<string, TensorShape> map_shapes;
+        Output input_batch_var, drop_rate_var, skip_drop_var, out_classification;
+        Scope net_root;
 
     public:
         CNN(int h, int w, int mean=0, int s=255) : image_root(Scope::NewRootScope()), image_height(h), image_width(w), image_mean(mean), image_std(s){};
