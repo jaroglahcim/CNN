@@ -27,5 +27,7 @@ class CNN
         Status CreateGraphForImage(bool unstack);
         Status ReadTensorFromImageFile(const string& file_name, Tensor& out_tensor);
         Status ReadFileTensors(string& base_folder_name, vector<pair<string, float>> v_folder_label, vector<pair<Tensor, float>>& file_tensors);
+        Status ReadBatches(string& base_folder_name, vector<pair<string, float>> v_folder_label, int batch_size,
+                           vector<Tensor>& image_batches, vector<Tensor>& label_batches);
 };
 

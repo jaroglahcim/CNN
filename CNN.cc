@@ -3,6 +3,7 @@ using namespace std;
 using namespace tensorflow;
 using namespace tensorflow::ops;
 
+
 //creates graph of operations for an image, does not execute them
 //bool value should be false if done for one image, true if for loading a batch
 Status CNN::CreateGraphForImage(bool unstack)
@@ -52,6 +53,7 @@ Status CNN::CreateGraphForImage(bool unstack)
     return image_root.status();
 }
 
+
 //runs the graph created by CreateGraphForImage function; in this way creates image tensor from file
 Status CNN::ReadTensorFromImageFile(const string& file_name, Tensor& out_tensor)
 {
@@ -73,6 +75,7 @@ Status CNN::ReadTensorFromImageFile(const string& file_name, Tensor& out_tensor)
     out_tensor = out_tensors[0];
     return Status::OK();
 }
+
 
 /*reads all files from specified subdirectories and returns a shuffled vector of pairs with image tensors created through
   ReadTensorFromImageFile function and a specified label; assumes graph for said action is already created   
@@ -147,7 +150,75 @@ Status CNN::ReadFileTensors(string& base_folder_path, vector<pair<string, float>
     return Status::OK();
 }
 
+//reads files from base folder in labeled subfolders and creates vectors of tensors of batches of images and labels
+//check ReadFileTensors function comments for further info on folder structure
+//first arg: path to base folder
+//second arg: vector of pairs of [subfolder name, label value]; labels should be different floats
+//third arg: batch size, i.e. how many images should be fed into the net in one go
+//fourth arg: returning vector of image batches tensors
+//fifth arg: returning vector of label batches tensors
+//4th and 5th arg have same index number
+Status CNN::ReadBatches(string& base_folder_path, vector<pair<string, float>> subfolder_label_pairs, int batch_size,
+                        vector<Tensor>& image_batches, vector<Tensor>& label_batches)
+{
+    //reads the folder and its sub-folders’ content into a vector pair using ReadFileTensors
+    vector<pair<Tensor, float>> all_files_tensors;
+    TF_RETURN_IF_ERROR(ReadFileTensors(base_folder_path, subfolder_label_pairs, all_files_tensors));
 
+    //variables for splitting batches 
+    auto start_image = all_files_tensors.begin();
+    auto end_image = all_files_tensors.begin()+batch_size;
+
+    size_t batches = all_files_tensors.size()/batch_size;
+    if(batches*batch_size < all_files_tensors.size())
+        batches++;
+
+    //for each batch
+    for(int b = 0; b < batches; b++)
+    {
+        //checking if end_image did not go overboard
+        if(end_image > all_files_tensors.end())
+            end_image = all_files_tensors.end();
+
+        //extracts batch from the whole vector of pairs 
+        vector<pair<Tensor, float>> one_batch(start_image, end_image);
+        //need to break the pairs to create two Input vectors where each n-th element in the Tensor vector matches the n-th element in the labels vector
+        vector<Input> one_batch_image, one_batch_label;
+        //for each pair in batch
+        for(auto pair: one_batch)
+        {
+            //add to image vector
+            one_batch_image.push_back(Input(pair.first));
+            //add to label vector - need to convert it first through a Tensor
+            Tensor t(DT_FLOAT, TensorShape({1}));
+            t.scalar<float>()(0) = pair.second;
+            one_batch_label.push_back(Input(t));
+        }
+
+        //creating a tiny graph and running it (for each batch as we are in a loop)
+        //the operation that will be performed - Stack, which accepts an InputList as an argument
+        InputList one_batch_inputs(one_batch_image);
+        InputList one_batch_labels(one_batch_label);
+        //stacking said InputLists and running a session, storing a result in a vector of Tensors out_tensors
+        Scope root = Scope::NewRootScope();
+        //Stack creates a single 4d tensor out of our 3d image vectors
+        auto stacked_images = Stack(root, one_batch_inputs);
+        auto stacked_labels = Stack(root, one_batch_labels);
+        TF_CHECK_OK(root.status());
+        ClientSession session(root);
+        vector<Tensor> out_tensors;
+        TF_CHECK_OK(session.Run({}, {stacked_images, stacked_labels}, &out_tensors));
+
+        //adding created tensors to returning vectors of tensors
+        image_batches.push_back(out_tensors[0]);
+        label_batches.push_back(out_tensors[1]);
+        start_image = end_image;
+        if(start_image == all_files_tensors.end())
+            break;
+        end_image = start_image + batch_size;
+    }
+    return Status::OK();
+}
 
 
 
