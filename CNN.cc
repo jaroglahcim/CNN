@@ -3,6 +3,7 @@ using namespace std;
 using namespace tensorflow;
 using namespace tensorflow::ops;
 
+//                                                     LOADING IMAGES FUNCTIONS
 
 //creates graph of operations for an image, does not execute them
 //bool value should be false if done for one image, true if for loading a batch
@@ -67,6 +68,7 @@ Status CNN::ReadTensorFromImageFile(const string& file_name, Tensor& out_tensor)
     vector<Tensor> out_tensors;
     //first arg: list of pairs with index and element; one pair is passed, with variable
     //node from Placeholder file_name_var as index and a value of string file_name as element
+    //(Placeholder is like a function parameter, it is specified here with its value)   
     //second arg: vector of graph nodes to evaluate
     //third arg: vector of tensors, results of evaluation
     //TF_CHECK_OK macro for errors etc.
@@ -221,42 +223,110 @@ Status CNN::ReadBatches(string& base_folder_path, vector<pair<string, float>> su
 }
 
 
+//                                                          NETWORK CREATION FUNCTIONS
 
 
-
-/*
-//function which reproduces image from a tensor - reverse operation to ReadTensorFromImageFile
-Status WriteTensorToImageFile(const string& file_name, const int input_height,
-                              const int input_width, const float input_mean,
-                              const float input_std, vector<Tensor>& in_tensors)
+//function which creates a single convolution layer graph with Rectified Linear Unit (ReLU) activation function with 1 stride and same-type padding plus
+//max pooling using a 2x2 window and stride 2, initialized with Xavier initialization function and 0 as bias
+//first arg: index string to distinguish between layers
+//second arg: subscope - since layers are a composition of operations in low lever API, a subscope is created for each layer
+//?
+Input CNN::AddConvolutionLayer(string index, Scope scope, int in_channels, int out_channels, int filter_height, int filter_width, Input input)
 {
-    auto root = Scope::NewRootScope();
-    //reversing normalisation operation on input tensor
-    //resized = d * input_std + input_mean <=> un_normalized = in_tensors[0] * input_std + input_mean
-    //tutorial has an error here - wrong order of operations, which does not matter as long as input_mean=0
-    //(which it is set to in main)
-    //auto un_normalized = Multiply(root.WithOpName("un_normalized"), Add(root, in_tensors[0], {input_mean}), {input_std});
-    auto un_normalized = Add(root.WithOpName("un_normalized"), Multiply(root, in_tensors[0], {input_std}), {input_mean}); 
-    //reshape to original size - 3-dimensional tensor with height and width passed as arguments and RGB values in 3rd dim    
-    auto shaped = Reshape(root.WithOpName("reshape"), un_normalized, Const(root, {input_height, input_width, 3}));
-    if(!root.ok())
-        LOG(FATAL) << root.status().ToString();
-    //recast to uint8
-    auto casted = Cast(root.WithOpName("cast"), shaped, DT_UINT8);
-    //encode as JPEG
-    auto image = EncodeJpeg(root.WithOpName("EncodeJpeg"), casted);
+    //create a TensorShape denoted by its number of dimensions and size for each dimension
+    //in this example 4d shape with sizes denoted by variables: filter height and width, in and out channels
+    TensorShape sp({filter_height, filter_width, in_channels, out_channels});
+    //Conv2D operation needs a Tensor variable which holds different filters (32 in first layer), which will be changed with each step when
+    //network is in training; each filter is represented by a 4d tensor, shape of which is specified by sp 
+    //map_vars map holds these variables with string key with W in front (and biases with B instead)
+    map_vars["W"+index] = Variable(scope.WithOpName("W"), sp, DT_FLOAT);
+    //map_shapes map holds shapes of map_vars variable
+    map_shapes["W"+index] = sp;
+    //map_assigns map stores operations with which variables are initialized - it is done using Xavier initialization method
+    map_assigns["W"+index+"_assign"] = Assign(scope.WithOpName("W_assign"), map_vars["W"+index], XavierInitialization(scope, in_channels, out_channels, filter_height, filter_width));
+    
+    sp = {out_channels};
+    map_vars["B"+index] = Variable(scope.WithOpName("B"), sp, DT_FLOAT);
+    map_shapes["B"+index] = sp;
+    //bias is initialized with a 0
+    map_assigns["B"+index+"_assign"] = Assign(scope.WithOpName("B_assign"), map_vars["B"+index], Input::Initializer(0.f, sp));
 
-    //create ClientSession and run
-    vector<Tensor> out_tensors;
-    ClientSession session(root);
-    TF_CHECK_OK(session.Run({image}, &out_tensors));
+    //creating a graph of operations to be done in a layer
 
-    //write image into a file using ofstream
-    ofstream fs(file_name, ios::binary);
-    //tstring instead of string, types were changed in TensorFlow
-    fs << out_tensors[0].scalar<tstring>()();
+    //convolution-filter operation with the specified input, filter variable, third arg: array of strides (we use standard 1)
+    //fourth arg: padding type name (we use standard SAME)
+    auto conv = Conv2D(scope.WithOpName("Conv"), input, map_vars["W"+index], {1, 1, 1, 1}, "SAME");
+    //add bias after filtering operation
+    auto bias = BiasAdd(scope.WithOpName("Bias"), conv, map_vars["B"+index]);
+    //perform relu activation function
+    auto relu = Relu(scope.WithOpName("Relu"), bias);
+    //pooling max value of each 2x2 window with stride 2; stride and window should keep 1 on first and last array place and change middle ones only
+    //(in python you specify only those) 
+    return MaxPool(scope.WithOpName("Pool"), relu, {1, 2, 2, 1}, {1, 2, 2, 1}, "SAME");
+}
+
+//function which returns initialization according to Xavier method 
+Input CNN::XavierInitialization(Scope scope, int in_channels, int out_channels, int filter_height=0, int filter_width=0){
+    float std;
+    Tensor t;
+    if(filter_height == 0)
+    { //Dense
+        std = sqrt(6.f/(in_channels+out_channels));
+        Tensor ts(DT_INT64, {2});
+        auto v = ts.vec<int64>();
+        v(0) = in_channels;
+        v(1) = out_channels;
+        t = ts;
+    }
+    else
+    { //Conv
+        std = sqrt(6.f/(filter_height*filter_width*(in_channels+out_channels)));
+        Tensor ts(DT_INT64, {4});
+        auto v = ts.vec<int64>();
+        v(0) = filter_height;
+        v(1) = filter_width;
+        v(2) = in_channels;
+        v(3) = out_channels;
+        t = ts;
+    }
+    auto rand = RandomUniform(scope, t, DT_FLOAT);
+    return Multiply(scope, Sub(scope, rand, 0.5f), std*2.f);
+}
+
+Status CNN::CreateGraphForCNN(int filter_height, int filter_width){
+    
     return Status::OK();
-}*/
+}
+
+
+
+
+
+//function which creates a single dense layer graph; works largely analogously to AddConvolutionLayer function
+//fifth arg: bool bActivation determines if ReLU activation will be performed or should binary activation be used
+//ReLU is used on all dense layers besides the last one
+Input CNN::AddDenseLayer(string index, Scope scope, int in_units, int out_units, bool bActivation, Input input)
+{
+    //map_vars holds weights for input multiplication and bias to add
+    TensorShape sp = {in_units, out_units};
+    map_vars["W"+index] = Variable(scope.WithOpName("W"), sp, DT_FLOAT);
+    map_shapes["W"+index] = sp;
+    //weights here are also initialized with Xavier initialization
+    map_assigns["W"+index+"_assign"] = Assign(scope.WithOpName("W_assign"), map_vars["W"+index], XavierInitialization(scope, in_units, out_units));
+    sp = {out_units};
+    map_vars["B"+index] = Variable(scope.WithOpName("B"), sp, DT_FLOAT);
+    map_shapes["B"+index] = sp;
+    //biases are also initialized with 0
+    map_assigns["B"+index+"_assign"] = Assign(scope.WithOpName("B_assign"), map_vars["B"+index], Input::Initializer(0.f, sp));
+    //here multiplication and adding bias is performed
+    auto dense = Add(scope.WithOpName("Dense_b"), MatMul(scope.WithOpName("Dense_w"), input, map_vars["W"+index]), map_vars["B"+index]);
+    //in the last dense layer ReLU activation is skipped
+    if(bActivation)
+        return Relu(scope.WithOpName("Relu"), dense);
+    else
+        return dense;
+}
+
 
 
 int main(int argc, const char * argv[])

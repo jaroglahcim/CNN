@@ -22,6 +22,9 @@ class CNN
         const int image_channels=3, image_height, image_width, image_mean, image_std;
         Output image_tensor_var, file_name_var;
 
+        map<string, Output> map_vars, map_assigns;
+        map<string, TensorShape> map_shapes;
+
     public:
         CNN(int h, int w, int mean=0, int s=255) : image_root(Scope::NewRootScope()), image_height(h), image_width(w), image_mean(mean), image_std(s){};
         Status CreateGraphForImage(bool unstack);
@@ -29,5 +32,10 @@ class CNN
         Status ReadFileTensors(string& base_folder_name, vector<pair<string, float>> v_folder_label, vector<pair<Tensor, float>>& file_tensors);
         Status ReadBatches(string& base_folder_name, vector<pair<string, float>> v_folder_label, int batch_size,
                            vector<Tensor>& image_batches, vector<Tensor>& label_batches);
+        
+        Input AddConvolutionLayer(string index, Scope scope, int in_channels, int out_channels, int filter_height, int filter_width, Input input);
+        Input XavierInitialization(Scope scope, int in_channels, int out_channels, int filter_height=0, int filter_width=0);
+        Input AddDenseLayer(string index, Scope scope, int in_units, int out_units, bool bActivation, Input input);
+        Status CreateGraphForCNN(int filter_height, int filter_width);
 };
 

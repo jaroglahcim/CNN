@@ -54,8 +54,10 @@ Status ReadTensorFromImageFile(const string& file_name, const int input_height,
 
     //Now that graph was created, we create a client-session...
     ClientSession session(root);
-    //and run it and get results; first arg: list of pairs with index and element; one pair is passed, with variable
+    //and run it and get results
+    //first arg: list of pairs with index and element; one pair is passed, with variable
     //node from Placeholder file_name_var as index and a value of string file_name as element
+    //(Placeholder is like a function parameter, it is specified here with its value)   
     //second arg: vector of graph nodes to evaluate - in this case result of operations defined above, d
     //third arg: vector of tensors, results of evaluation - in this case only one tensor is expected
     //TF_CHECK_OK macro for errors etc.
