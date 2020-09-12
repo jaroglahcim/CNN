@@ -28,12 +28,11 @@ Status ReadTensorFromImageFile(const string& file_name, const int input_height,
     auto file_reader = ReadFile(root.WithOpName("file_readr"), file_name_var);
 
 
-    //decoding a JPEG-encoded image to a uint8 tensor; if file doesn't have a jpg extension throw error
+    //decoding a JPEG-encoded image to a uint8 tensor; if file doesn't have a jpg/jpeg extension throw error
     //third arg: setting the number of color channels in the decoded image to 3, which outputs an RGB image
-    if (!str_util::EndsWith(file_name, ".jpg"))
+    if (!str_util::EndsWith(file_name, ".jpg") && !str_util::EndsWith(file_name, ".jpeg"))
         return errors::InvalidArgument("Only jpg files are accepted");
-    const int wanted_channels = 3;
-    auto image_reader = DecodeJpeg(root.WithOpName("jpeg_reader"), file_reader, DecodeJpeg::Channels(wanted_channels));
+    auto image_reader = DecodeJpeg(root.WithOpName("jpeg_reader"), file_reader, DecodeJpeg::Channels(3));
 
 
     //cast image data to float for math operations (typical for TensorFlow)
@@ -49,8 +48,8 @@ Status ReadTensorFromImageFile(const string& file_name, const int input_height,
     auto resized = ResizeBilinear(root.WithOpName("size"), dims_expander, Const(root, {input_height, input_width}));
     //normalization of float elements to values between 0 and 1; performs two mathematical operations in one:
     //subtracts the mean (argument input_mean) and divides by the scale (argument input_std)
-    //d = (resized - input_mean) / input_std
-    auto d = Div(root.WithOpName("normalized"), Sub(root, resized, {input_mean}), {input_std});
+    //div = (resized - input_mean) / input_std
+    auto div = Div(root.WithOpName("normalized"), Sub(root, resized, {input_mean}), {input_std});
 
 
     //Now that graph was created, we create a client-session...
@@ -59,8 +58,8 @@ Status ReadTensorFromImageFile(const string& file_name, const int input_height,
     //node from Placeholder file_name_var as index and a value of string file_name as element
     //second arg: vector of graph nodes to evaluate - in this case result of operations defined above, d
     //third arg: vector of tensors, results of evaluation - in this case only one tensor is expected
-    //TF_CHECK_OK macro ????? 
-    TF_CHECK_OK(session.Run({{file_name_var, file_name}}, {d}, out_tensors));
+    //TF_CHECK_OK macro for errors etc.
+    TF_CHECK_OK(session.Run({{file_name_var, file_name}}, {div}, out_tensors));
 
 
     //creating graph visualisation using TensorBoard, if bool option in function arguments set to true 
@@ -93,7 +92,7 @@ Status WriteTensorToImageFile(const string& file_name, const int input_height,
 {
     auto root = Scope::NewRootScope();
     //reversing normalisation operation on input tensor
-    //resized = d * input_std + input_mean <=> un_normalized = in_tensors[0] * input_std + input_mean
+    //resized = div * input_std + input_mean <=> un_normalized = in_tensors[0] * input_std + input_mean
     //tutorial has an error here - wrong order of operations, which does not matter as long as input_mean=0
     //(which it is set to in main)
     //auto un_normalized = Multiply(root.WithOpName("un_normalized"), Add(root, in_tensors[0], {input_mean}), {input_std});
