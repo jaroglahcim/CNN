@@ -412,6 +412,56 @@ Status CNN::CreateGraphForCNN(int filter_height, int filter_width){
     return net_root.status();
 }
 
+//adds nodes to neural net graph created in CreateGraphForCNN function to "optimize it" - adds backpropagation to it
+//regular mean square difference is used for loss calculation and Adam Optimization Algorithm is used for optimization
+//(instead of gradient descent or whatever)
+//first arg: IMPORTANT pass number for wildly differing results, one that worked well is 0.0001    
+Status CNN::CreateOptimizationGraph(float learning_rate)
+{
+    //Placeholder for labels
+    input_labels_var = Placeholder(train_root.WithOpName("inputL"), DT_FLOAT);
+    //Adding to graph operation for loss calculation - mean square difference
+    //cross entropy and SoftmaxCrossEntropyWithLogits function could be better, but not know how to use
+    //in out_classification are our results from previous classification batch 
+    Scope scope_loss = train_root.NewSubScope("Loss_scope");
+    out_loss_var = Mean(scope_loss.WithOpName("Loss"), SquaredDifference(scope_loss, out_classification, input_labels_var), {0});
+    TF_CHECK_OK(scope_loss.status());
+
+    //AddSymbolicGradients takes graph from scope, adds all relevant backpropagating operations and returns a vector
+    //of gradient of same size as number of weights and biases, i.e. calculates gradient
+    //third arg: vector of weights and biases; it is created from the map map_vars which was set to be filled with all
+    //           weights and biases during graph creation of layers of CNN
+    //fourth arg: result - vector of gradient for all weights and biases
+    for(pair<string, Output> i: map_vars)
+        vector_weights_biases.push_back(i.second);
+    vector<Output> gradient_outputs;
+    TF_CHECK_OK(AddSymbolicGradients(train_root, {out_loss_var}, vector_weights_biases, &gradient_outputs));
+
+    //applying Adam optimization algorithm with calculated gradient for each weight/bias
+    int index = 0;
+    for(pair<string, Output> i: map_vars)
+    {
+        string string_index = to_string(index);
+        //variable names as are used in Adam algorithm, have to be Variable()
+        auto m_var = Variable(train_root, map_shapes[i.first], DT_FLOAT);
+        auto v_var = Variable(train_root, map_shapes[i.first], DT_FLOAT);
+
+        map_assigns["m_assign"+string_index] = Assign(train_root, m_var, Input::Initializer(0.f, map_shapes[i.first]));
+        map_assigns["v_assign"+string_index] = Assign(train_root, v_var, Input::Initializer(0.f, map_shapes[i.first]));
+
+        //passing a lot of values for specific elements in algorithm; can be played around with for starkly differing results
+        //most important one it seems is learning_rate, which is why it is passed through an argument in our CreateOptimizationGraph
+        auto adam = ApplyAdam(train_root, i.second, m_var, v_var, 0.f, 0.f, learning_rate, 0.9f, 0.999f, 0.00000001f, {gradient_outputs[index]});
+        vector_out_gradients.push_back(adam.operation);
+        index++;
+    }
+    return train_root.status();
+}
+
+//utility function for writing graph visualisations for TensorBoard to watch
+//to see resulting graph:
+//  command: tensorboard --logdir ~/tensorflow/tensorflow/examples/CNN/graphs/
+//  open link in browser: http://localhost:6006/#graphs&run=
 Status CNN::writeGraphForTensorboard(Scope scope)
 {
     //defining graph variable
@@ -435,7 +485,6 @@ Status CNN::writeGraphForTensorboard(Scope scope)
 int main(int argc, const char * argv[])
 {
     int image_side = 150;
-    int image_channels = 3;
     CNN model(image_side, image_side);
     cout << "Model initialized" << endl;
     Status s = model.CreateGraphForImage(true);
@@ -451,9 +500,9 @@ int main(int argc, const char * argv[])
     cout << "Batches read" << endl;
     TF_CHECK_OK(s);
     
-    //base_folder = "/home/mordoksieznik/tensorflow/tensorflow/examples/CNN/data/validation";
-    //s = model.ReadBatches(base_folder, {make_pair("cats", 0), make_pair("dogs", 1)}, batch_size, valid_images, valid_labels);
-    //TF_CHECK_OK(s);
+    base_folder = "/home/mordoksieznik/tensorflow/tensorflow/examples/CNN/data/validation";
+    s = model.ReadBatches(base_folder, {make_pair("cats", 0), make_pair("dogs", 1)}, batch_size, valid_images, valid_labels);
+    TF_CHECK_OK(s);
 
     //CNN model
     int filter_side = 3;
@@ -461,8 +510,16 @@ int main(int argc, const char * argv[])
     cout << "CNN graph created" << endl;
     TF_CHECK_OK(s);
 
+    s = model.CreateOptimizationGraph(0.0002f);
+    cout << "CNN graph with optimization created" << endl;
+    TF_CHECK_OK(s);
+
+
+
     //uncomment to create a graph visualisation using TensorBoard 
     model.writeGraphForTensorboard(model.net_root);
     cout << "Graph for Tensorboard drawn" << endl;
+
+
     return 0;
 }
