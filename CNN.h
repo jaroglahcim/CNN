@@ -28,6 +28,7 @@ class CNN
         Output input_labels_var, out_loss_var;
         vector<Output> vector_weights_biases;
         vector<Operation> vector_out_gradients;
+        ClientSession train_session;
 
     public:
         Scope image_root, net_root, train_root;
@@ -41,11 +42,12 @@ class CNN
                            vector<Tensor>& image_batches, vector<Tensor>& label_batches);
         
         Input AddConvolutionLayer(string index, Scope scope, int in_channels, int out_channels, int filter_height, int filter_width, Input input);
-        Input XavierInitialization(Scope scope, int in_channels, int out_channels, int filter_height=0, int filter_width=0);
         Input AddDenseLayer(string index, Scope scope, int in_units, int out_units, bool bActivation, Input input);
+        Input XavierInitialization(Scope scope, int in_channels, int out_channels, int filter_height=0, int filter_width=0);
         Status CreateGraphForCNN(int filter_height, int filter_width);
         Status CreateOptimizationGraph(float learning_rate);
+        Status Initialize();
         
-        Status writeGraphForTensorboard(Scope scope);
+        Status writeGraphForTensorboard(Scope scope, string s);
 };
 

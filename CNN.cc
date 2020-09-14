@@ -458,11 +458,26 @@ Status CNN::CreateOptimizationGraph(float learning_rate)
     return train_root.status();
 }
 
+//function which runs initializating operations in a session for the whole CNN
+Status CNN::Initialize()
+{
+    //get all operations to run in format suitable for ClientSession's run - vector
+    //and run it on train scope
+    vector<Output> ops_to_run;
+    for (auto i: map_assigns)
+        ops_to_run.push_back(i.second);
+    train_session = unique_ptr<ClientSession>(new ClientSession(train_root));
+    TF_CHECK_OK(train_session->Run(ops_to_run, nullptr));
+
+    return Status::OK();
+}
+
+
 //utility function for writing graph visualisations for TensorBoard to watch
 //to see resulting graph:
 //  command: tensorboard --logdir ~/tensorflow/tensorflow/examples/CNN/graphs/
 //  open link in browser: http://localhost:6006/#graphs&run=
-Status CNN::writeGraphForTensorboard(Scope scope)
+Status CNN::writeGraphForTensorboard(Scope scope, string s)
 {
     //defining graph variable
     GraphDef graph;
@@ -476,7 +491,7 @@ Status CNN::writeGraphForTensorboard(Scope scope)
     //sixth arg: resulting file writer
     SummaryWriterInterface* w;
     TF_CHECK_OK(CreateSummaryFileWriter(1, 0, "/home/mordoksieznik/tensorflow/tensorflow/examples/CNN/graphs",
-                ".img-graph", Env::Default(), &w));
+                "." + s + "-graph", Env::Default(), &w));
     //using created writer to write said graph
     TF_CHECK_OK(w->WriteGraph(0, make_unique<GraphDef>(graph)));
     return Status::OK();
@@ -514,10 +529,12 @@ int main(int argc, const char * argv[])
     cout << "CNN graph with optimization created" << endl;
     TF_CHECK_OK(s);
 
+    //s = model.Initialize();
+
 
 
     //uncomment to create a graph visualisation using TensorBoard 
-    model.writeGraphForTensorboard(model.net_root);
+    model.writeGraphForTensorboard(model.net_root, "cnn");
     cout << "Graph for Tensorboard drawn" << endl;
 
 
