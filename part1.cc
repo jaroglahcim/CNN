@@ -78,7 +78,7 @@ Status ReadTensorFromImageFile(const string& file_name, const int input_height,
         //fourth arg: file name suffix
         //sixth arg: resulting file writer
         SummaryWriterInterface* w;
-        TF_CHECK_OK(CreateSummaryFileWriter(1, 0, "/home/mordoksieznik/Code/tensorflow/tensorflow/examples/my_project1/graphs",
+        TF_CHECK_OK(CreateSummaryFileWriter(1, 0, "/home/mordoksieznik/tensorflow/tensorflow/examples/my_project1/graphs",
                     ".img-graph", Env::Default(), &w));
         //using created writer to write said graph
         TF_CHECK_OK(w->WriteGraph(0, make_unique<GraphDef>(graph)));
@@ -124,7 +124,7 @@ Status WriteTensorToImageFile(const string& file_name, const int input_height,
 int main(int argc, const char * argv[])
 {
     //set image data
-    string image = "/home/mordoksieznik/Code/tensorflow/tensorflow/examples/my_project1/data/test.jpg";
+    string image = "/home/mordoksieznik/tensorflow/tensorflow/examples/my_project1/data/test.jpg";
     int32 input_width = 299;
     int32 input_height = 299;
     float input_mean = 10;
@@ -141,7 +141,7 @@ int main(int argc, const char * argv[])
         return -1;
     }
     Status write_tensor_staus = WriteTensorToImageFile(
-                                "/home/mordoksieznik/Code/tensorflow/tensorflow/examples/my_project1/data/output.jpg",
+                                "/home/mordoksieznik/tensorflow/tensorflow/examples/my_project1/data/output.jpg",
                                 input_height, input_width, input_mean, input_std, resized_tensors);  
     return 0;
 }

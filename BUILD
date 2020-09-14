@@ -1,10 +1,5 @@
 load("//tensorflow:tensorflow.bzl", "tf_cc_binary")
 
-cc_library(
-    name = "CNN",
-    hdrs = ["CNN.h"],
-)
-
 tf_cc_binary(
     name = "my_project",
     srcs = ["CNN.cc", "CNN.h"],

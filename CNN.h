@@ -25,9 +25,10 @@ class CNN
         map<string, Output> map_vars, map_assigns;
         map<string, TensorShape> map_shapes;
         Output input_batch_var, drop_rate_var, skip_drop_var, out_classification;
-        Scope net_root;
 
     public:
+        Scope net_root;
+        
         CNN(int h, int w, int mean=0, int s=255) : image_root(Scope::NewRootScope()), net_root(Scope::NewRootScope()), image_height(h), image_width(w), image_mean(mean), image_std(s){};
         Status CreateGraphForImage(bool unstack);
         Status ReadTensorFromImageFile(const string& file_name, Tensor& out_tensor);
@@ -39,5 +40,7 @@ class CNN
         Input XavierInitialization(Scope scope, int in_channels, int out_channels, int filter_height=0, int filter_width=0);
         Input AddDenseLayer(string index, Scope scope, int in_units, int out_units, bool bActivation, Input input);
         Status CreateGraphForCNN(int filter_height, int filter_width);
+        
+        Status writeGraphForTensorboard(Scope scope);
 };
 

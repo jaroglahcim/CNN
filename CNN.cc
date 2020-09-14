@@ -37,7 +37,9 @@ Status CNN::CreateGraphForImage(bool unstack)
     //normalization of float elements to values between 0 and 1; performs two mathematical operations in one:
     //subtracts the mean (argument image_mean) and divides by the scale (argument image_std)
     //div = (resized - image_mean) / image_std
-    auto div = Div(image_root.WithOpName("normalized"), Sub(image_root, resized, {image_mean}), {image_std});
+
+    auto div = Div(image_root.WithOpName("normalized"), resized, {255.f});
+    //auto div = Div(image_root.WithOpName("normalized"), Sub(image_root, resized, {image_mean}), {image_std});
 
 
     //check if tensors should be unstacked
@@ -410,30 +412,57 @@ Status CNN::CreateGraphForCNN(int filter_height, int filter_width){
     return net_root.status();
 }
 
+Status CNN::writeGraphForTensorboard(Scope scope)
+{
+    //defining graph variable
+    GraphDef graph;
+    //extract graph object from scope using utility function ToGraphDef
+    TF_RETURN_IF_ERROR(scope.ToGraphDef(&graph));
+    //creating SummaryFileWriter, which will write graph files
+    //first arg: max queue of graphs before writing, in this case 1
+    //second arg: wait time in milliseconds, in this case 0
+    //third arg: path to folder where files will be stored
+    //fourth arg: file name suffix
+    //sixth arg: resulting file writer
+    SummaryWriterInterface* w;
+    TF_CHECK_OK(CreateSummaryFileWriter(1, 0, "/home/mordoksieznik/tensorflow/tensorflow/examples/CNN/graphs",
+                ".img-graph", Env::Default(), &w));
+    //using created writer to write said graph
+    TF_CHECK_OK(w->WriteGraph(0, make_unique<GraphDef>(graph)));
+    return Status::OK();
+}
 
 int main(int argc, const char * argv[])
 {
-    /*
-    //set image data
-    string image = "/home/mordoksieznik/Code/tensorflow/tensorflow/examples/my_project1/data/test.jpg";
-    int32 input_width = 299;
-    int32 input_height = 299;
-    float input_mean = 10;
-    float input_std = 255;
-    vector<Tensor> resized_tensors;
+    int image_side = 150;
+    int image_channels = 3;
+    CNN model(image_side, image_side);
+    cout << "Model initialized" << endl;
+    Status s = model.CreateGraphForImage(true);
+    cout << "Graph for image created" << endl;
+    TF_CHECK_OK(s);
 
-    //read tensor from image, reverse this operation and check results 
-    Status read_tensor_status = ReadTensorFromImageFile(image, input_height, input_width, input_mean,
-                                input_std, &resized_tensors, true);
-    cout << resized_tensors[0].shape().DebugString() << endl;
-    if (!read_tensor_status.ok())
-    {
-        LOG(ERROR) << read_tensor_status;
-        return -1;
-    }
-    Status write_tensor_staus = WriteTensorToImageFile(
-                                "/home/mordoksieznik/Code/tensorflow/tensorflow/examples/my_project1/data/output.jpg",
-                                input_height, input_width, input_mean, input_std, resized_tensors);
-    */
+    string base_folder = "/home/mordoksieznik/tensorflow/tensorflow/examples/CNN/data/train";
+    int batch_size = 20;
+    
+    vector<Tensor> image_batches, label_batches, valid_images, valid_labels;
+    //Label: cat=0, dog=1
+    s = model.ReadBatches(base_folder, {make_pair("cats", 0), make_pair("dogs", 1)}, batch_size, image_batches, label_batches);
+    cout << "Batches read" << endl;
+    TF_CHECK_OK(s);
+    
+    //base_folder = "/home/mordoksieznik/tensorflow/tensorflow/examples/CNN/data/validation";
+    //s = model.ReadBatches(base_folder, {make_pair("cats", 0), make_pair("dogs", 1)}, batch_size, valid_images, valid_labels);
+    //TF_CHECK_OK(s);
+
+    //CNN model
+    int filter_side = 3;
+    s = model.CreateGraphForCNN(filter_side, filter_side);
+    cout << "CNN graph created" << endl;
+    TF_CHECK_OK(s);
+
+    //uncomment to create a graph visualisation using TensorBoard 
+    model.writeGraphForTensorboard(model.net_root);
+    cout << "Graph for Tensorboard drawn" << endl;
     return 0;
 }
