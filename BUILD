@@ -1,13 +1,17 @@
 load("//tensorflow:tensorflow.bzl", "tf_cc_binary")
 
+cc_library(
+    name = "CNN",
+    hdrs = ["CNN.h"],
+)
+
 tf_cc_binary(
     name = "my_project",
-    srcs = ["main.cc", "CNN.cc"],
-    hdrs = ["CNN.h"],
+    srcs = ["CNN.cc", "CNN.h"],
     deps = ["//tensorflow/core:tensorflow",
             "//tensorflow/cc:cc_ops",
             "//tensorflow/cc:client_session",
-            "//tensorflow/cc:image_ops",
+            "//tensorflow/core/kernels:image_ops",
             "//tensorflow/core:core_cpu",
             "//tensorflow/core:framework",
             "//tensorflow/core:framework_internal",

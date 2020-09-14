@@ -266,7 +266,8 @@ Input CNN::AddConvolutionLayer(string index, Scope scope, int in_channels, int o
 }
 
 //function which returns initialization according to Xavier method ?
-Input CNN::XavierInitialization(Scope scope, int in_channels, int out_channels, int filter_height=0, int filter_width=0){
+Input CNN::XavierInitialization (Scope scope, int in_channels, int out_channels, int filter_height, int filter_width)
+{
     float std;
     Tensor t;
     if(filter_height == 0)
