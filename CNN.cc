@@ -226,7 +226,7 @@ Status CNN::ReadBatches(string& base_folder_path, vector<pair<string, float>> su
 }
 
 
-//                                                          NETWORK CREATION FUNCTIONS
+//                                                          NETWORK FUNCTIONS
 
 
 //function which creates a single convolution layer graph with Rectified Linear Unit (ReLU) activation function with 1 stride and same-type padding plus
@@ -323,8 +323,8 @@ Input CNN::AddDenseLayer(string index, Scope scope, int in_units, int out_units,
 }
 
 
-//function which creates full CNN architecture graph
-//
+//function which creates full CNN architecture graph (without backpropagation
+//4 Convergence Layers with Maxpooling and 3 Dense Layers (2 with ReLU activation, last with sigmoid function) with Dropout (for dense layers obv)  
 Status CNN::CreateGraphForCNN(int filter_height, int filter_width){
     //input batch of images, it's size in our example is batch_sizex150x150x3
     //again starting with a placeholder - we again keep this variable stored in object, so as to avoid trouble with passing it later 
@@ -382,8 +382,12 @@ Status CNN::CreateGraphForCNN(int filter_height, int filter_width){
     //standard uses - drop_rate_var <- 0.5f, skip_drop_var <- 0.f during training,  drop_rate_var <- 1.f, skip_drop_var <- 1.f during validation/prediction
     //(has to be used in such a cumbersome way because with switch and merge backpropagation is impossible)   
     Scope dropout = net_root.NewSubScope("Dropout_layer");
+    //Uniform distribution, args: scope, shape of the output tensor, type of output; output tensor is of size of flattened image batch
+    //and have random floating point numbers with uniform distribution from [0, 1] range
     auto rand = RandomUniform(dropout, Shape(dropout, flat), DT_FLOAT);
     //binary = floor(rand + (1 - drop_rate) + skip_drop)
+    //returns a vector of same size with binary values of 0 and 1 through flooring in such way that about a skip_drop percentage of
+    //elements in tensor have a value of 1 (bar the situation of skipping drop)
     auto binary = Floor(dropout, Add(dropout, rand, Add(dropout, Sub(dropout, 1.f, drop_rate_var), skip_drop_var)));
     //when dropping, remaining neurons have values increased by dividing by the drop rate
     auto after_drop = Multiply(dropout.WithOpName("dropout"), Div(dropout, flat, drop_rate_var), binary);
@@ -457,7 +461,7 @@ Status CNN::CreateOptimizationGraph(float learning_rate)
 
         map_assigns["m_assign"+string_index] = Assign(net_root, m_var, Input::Initializer(0.f, map_shapes[i.first]));
         map_assigns["v_assign"+string_index] = Assign(net_root, v_var, Input::Initializer(0.f, map_shapes[i.first]));
-        //passing a lot of values for specific elements in algorithm; can be played around with for starkly differing results
+        //passing a lot of values for specific elements in algorithm; can be played around with for differing results
         //most important one it seems is learning_rate, which is why it is passed through an argument in our CreateOptimizationGraph
         auto adam = ApplyAdam(net_root, i.second, m_var, v_var, 0.f, 0.f, learning_rate, 0.9f, 0.999f, 0.00000001f, grad_outputs[index]);
         v_out_grads.push_back(adam.operation);
@@ -483,32 +487,45 @@ Status CNN::Initialize()
     return Status::OK();
 }
 
+//function which runs image labelling in training mode - with training elements - dropout, backpropagation and with loss evaluation
+//first and second arg: tensor with a batch of images and a tensor with labels for each element in batch, already loaded
+//third arg: results holds a vector of 0s and 1s where 1 means correctly classified image (> 0.5 for label in the last layer of network)
+//fourth arg: one float value, calculated loss - mean squared difference
 Status CNN::TrainCNN(Tensor& image_batch, Tensor& label_batch, vector<float>& results, float& loss)
 {
     if(!net_root.ok())
         return net_root.status();
     
     vector<Tensor> out_tensors;
-    //Inputs: batch of images, labels, drop rate and do not skip drop.
-    //Extract: Loss and result. Run also: Apply Adam commands
+    //Args: batch of images and labels passed through arguments in this function TrainCNN which specify inputs
+    //Dropout parameters: drop rate of a half and skip drop to 0, i.e. not to skip - see dropout comments in CreateGraphForCNN function
+    //Backpropagation values for weights and bias from ApplyAdam function, v_out_grads 
+    //Returns: Loss and result in out_tensors
     TF_CHECK_OK(train_session->Run({{input_batch_var, image_batch}, {input_labels_var, label_batch}, {drop_rate_var, 0.5f}, {skip_drop_var, 0.f}},
                                 {out_loss_var, out_classification}, v_out_grads, &out_tensors));
+    
+    //extracting scalar values from tensors
     loss = out_tensors[0].scalar<float>()(0);
-    //both labels and results are shaped [20, 1]
+    //both labels and results are shaped [batch_size, 1]
     auto mat1 = label_batch.matrix<float>();
     auto mat2 = out_tensors[1].matrix<float>();
+    //for each image push to results vector: 1 for correct classification, 0 for wrong
+    //(if difference between network answer and label is higher that a half, it is incorrectly classified)
     for(int i = 0; i < mat1.dimension(0); i++)
         results.push_back((fabs(mat2(i, 0) - mat1(i, 0)) > 0.5f)? 0 : 1);
     return Status::OK();
 }
 
+//function which runs image labelling in validation mode - without training elements - dropout, backpropagation and without loss evaluation
+//more info in TrainCNN comments
 Status CNN::ValidateCNN(Tensor& image_batch, Tensor& label_batch, vector<float>& results)
 {
     if(!net_root.ok())
         return net_root.status();
     
     vector<Tensor> out_tensors;
-    //Inputs: batch of images, drop rate 1 and skip drop.
+    //Inputs: batch of images, drop rate 1 and skip_drop_var to 1 (which means skipping dropout phase).
+    //no need to pass labels since loss isn't calculated and binary results can be easily calculated down here 
     TF_CHECK_OK(train_session->Run({{input_batch_var, image_batch}, {drop_rate_var, 1.f}, {skip_drop_var, 1.f}}, {out_classification}, &out_tensors));
     auto mat1 = label_batch.matrix<float>();
     auto mat2 = out_tensors[0].matrix<float>();
@@ -517,6 +534,8 @@ Status CNN::ValidateCNN(Tensor& image_batch, Tensor& label_batch, vector<float>&
     return Status::OK();
 }
 
+//function which runs image labelling in prediction mode - without training elements - dropout, backpropagation and without loss evaluation
+//no batches, only single images
 Status CNN::Predict(Tensor& image, int& result)
 {
     if(!net_root.ok())
@@ -557,17 +576,19 @@ Status CNN::writeGraphForTensorboard(Scope scope, string s)
 
 int main(int argc, const char * argv[])
 {
+    //Creating our object and a graph of operations for loading batches of images to vectors
     int image_side = 150;
     CNN model(image_side, image_side);
-    cout << "Model initialized" << endl;
+    cout << "Object initialized" << endl;
     Status s;
     s = model.CreateGraphForImage(true);
     cout << "Graph for image created" << endl;
     TF_CHECK_OK(s);
 
+
+    //Reading a batch of images used for training and validation from specified paths - performing operations from the graph created above
     string base_folder = "/home/mordoksieznik/tensorflow/tensorflow/examples/CNN/data/train";
     int batch_size = 20;
-    
     vector<Tensor> image_batches, label_batches, valid_images, valid_labels;
     //Label: cat=0, dog=1
     s = model.ReadBatches(base_folder, {make_pair("cats", 0), make_pair("dogs", 1)}, batch_size, image_batches, label_batches);
@@ -579,37 +600,46 @@ int main(int argc, const char * argv[])
     cout << "Batches for validation read" << endl;
     TF_CHECK_OK(s);
 
-    //CNN model
+
+    //CNN model - graph creation (without backpropagation)
     int filter_side = 3;
     s = model.CreateGraphForCNN(filter_side, filter_side);
     cout << "CNN graph for going forward created" << endl;
     TF_CHECK_OK(s);
-
+    //backpropagation graph creation
     s = model.CreateOptimizationGraph(0.0002f);
     cout << "CNN graph with optimization created" << endl;
     TF_CHECK_OK(s);
+
 
     //uncomment to create a graph visualisation using TensorBoard 
     model.writeGraphForTensorboard(model.net_root, "cnn");
     cout << "Graph for Tensorboard drawn" << endl;
 
+
+    //initializing weights and biases
     s = model.Initialize();
     cout << "Model Initialized" << endl;
     TF_CHECK_OK(s);
 
+    //getting amount of batches for loop stopping and making sure there is the same amount of label and image batches
     size_t num_batches = image_batches.size();
     assert(num_batches == label_batches.size());
     size_t valid_batches = valid_images.size();
     assert(valid_batches == valid_labels.size());
 
-    int num_epochs = 5;
+
+    //Running training and validation for specified number (num_epochs) of epochs - one epoch is when the net has classified all training data once
+    int num_epochs = 20;
     //Epoch / Step loops
     for(int epoch = 0; epoch < num_epochs; epoch++)
     {
         cout << "Epoch " << epoch+1 << "/" << num_epochs << ":";
+        //Clock to display how long an epoch took
         auto t1 = high_resolution_clock::now();
         float loss_sum = 0;
         float accuracy_sum = 0;
+        //running an epoch - looping through all batches; adding all losses and accurcies together to display average at the end of every epoch
         for(int b = 0; b < num_batches; b++)
         {
             vector<float> results;
@@ -617,8 +647,9 @@ int main(int argc, const char * argv[])
             s = model.TrainCNN(image_batches[b], label_batches[b], results, loss);
             loss_sum += loss;
             accuracy_sum += accumulate(results.begin(), results.end(), 0.f) / results.size();
-            cout << ".";
+            cout << "." << flush;
         }
+
         cout << endl << "Validation:";
         float validation_sum = 0;
         for(int c = 0; c < valid_batches; c++)
@@ -626,17 +657,19 @@ int main(int argc, const char * argv[])
             vector<float> results;
             s = model.ValidateCNN(valid_images[c], valid_labels[c], results);
             validation_sum += accumulate(results.begin(), results.end(), 0.f) / results.size();
-            cout << ".";
+            cout << "." << flush;
 
         }
         auto t2 = high_resolution_clock::now();
         cout << endl << "Time: " << duration_cast<seconds>(t2-t1).count() << " seconds ";
         cout << "Loss: " << loss_sum/num_batches << " Results accuracy: " << accuracy_sum/num_batches << " Validation accuracy: " << validation_sum/valid_batches << endl;
     }
-    //testing the model
-    s = model.CreateGraphForImage(false);//rebuild the model without unstacking
+
+    //testing model after training - showing new images, getting results
+    //rebuild the model without unstacking
+    s = model.CreateGraphForImage(false);
     TF_CHECK_OK(s);
-    base_folder = "/home/mordoksieznik/tensorflow/tensorflow/examples/CNN/data/train";
+    base_folder = "/home/mordoksieznik/tensorflow/tensorflow/examples/CNN/data/test";
     vector<pair<Tensor, float>> all_files_tensors;
     s = model.ReadFileTensors(base_folder, {make_pair("cats", 0), make_pair("dogs", 1)}, all_files_tensors);
     TF_CHECK_OK(s);
