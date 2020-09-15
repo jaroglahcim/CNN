@@ -4,12 +4,12 @@
 #include "tensorflow/cc/client/client_session.h"
 #include "tensorflow/cc/ops/standard_ops.h"
 #include "tensorflow/cc/framework/gradients.h"
+//#include "gradients.h"
 #include "tensorflow/cc/ops/image_ops.h"
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/public/session.h"
 #include "tensorflow/core/lib/io/path.h"
 #include "tensorflow/core/summary/summary_file_writer.h"
-//#include "tensorflow/cc/tools/freeze_saved_model.h"
 
 using namespace std;
 using namespace tensorflow;
@@ -28,7 +28,7 @@ class CNN
         Output input_labels_var, out_loss_var;
         vector<Output> vector_weights_biases;
         vector<Operation> vector_out_gradients;
-        ClientSession train_session;
+        unique_ptr<ClientSession> train_session;
 
     public:
         Scope image_root, net_root, train_root;
