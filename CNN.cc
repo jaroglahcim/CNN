@@ -2,6 +2,7 @@
 using namespace std;
 using namespace tensorflow;
 using namespace tensorflow::ops;
+using namespace chrono;
 
 //                                                     LOADING IMAGES FUNCTIONS
 
@@ -420,25 +421,45 @@ Status CNN::CreateOptimizationGraph(float learning_rate)
 {
     //Placeholder for labels
     input_labels_var = Placeholder(train_root.WithOpName("inputL"), DT_FLOAT);
+
     //Adding to graph operation for loss calculation - mean square difference
     //cross entropy and SoftmaxCrossEntropyWithLogits function could be better, but not know how to use
     //in out_classification are our results from previous classification batch 
     Scope scope_loss = train_root.NewSubScope("Loss_scope");
     out_loss_var = Mean(scope_loss.WithOpName("Loss"), SquaredDifference(scope_loss, out_classification, input_labels_var), {0});
     TF_CHECK_OK(scope_loss.status());
+    cout << "  Mean calculated" << endl;
 
     //AddSymbolicGradients takes graph from scope, adds all relevant backpropagating operations and returns a vector
     //of gradient of same size as number of weights and biases, i.e. calculates gradient
     //third arg: vector of weights and biases; it is created from the map map_vars which was set to be filled with all
     //           weights and biases during graph creation of layers of CNN
     //fourth arg: result - vector of gradient for all weights and biases
-    for(pair<string, Output> i: map_vars)
-        vector_weights_biases.push_back(i.second);
-    vector<Output> gradient_outputs;
-    TF_CHECK_OK(AddSymbolicGradients(train_root, {out_loss_var}, vector_weights_biases, &gradient_outputs));
+    for(pair<string, Output> i: map_vars){
+        v_weights_biases.push_back(i.second);
+        cout << i.first << endl;
+    }
+    cout << "  vector_weights_biases pushed back" << endl;
+    vector<Output> grad_outputs;
+ 
+
+    TF_CHECK_OK(AddSymbolicGradients(train_root, {out_loss_var}, v_weights_biases, &grad_outputs));
+
+    cout << "  Symbolic gradients added" << endl;
+
+
+    // vector<Output> loss_vector, gradient_outputs;
+    // auto scewl = SoftmaxCrossEntropyWithLogits(train_root, out_classification, input_labels_var);
+
+    // cout << "  SCEWCL performed" << endl;
+
+    // loss_vector = {scewl.loss};
+    // cout << "  loss_vector przypisan" << endl;
+    // gradient_outputs = {scewl.backprop};
+    // cout << "  gradient_outputs przypisan" << endl;
 
     //applying Adam optimization algorithm with calculated gradient for each weight/bias
-    int index = 0;
+    int index = 0;  
     for(pair<string, Output> i: map_vars)
     {
         string string_index = to_string(index);
@@ -446,21 +467,37 @@ Status CNN::CreateOptimizationGraph(float learning_rate)
         auto m_var = Variable(train_root, map_shapes[i.first], DT_FLOAT);
         auto v_var = Variable(train_root, map_shapes[i.first], DT_FLOAT);
 
+        cout << "  Adam variables " << index << endl;
+
         map_assigns["m_assign"+string_index] = Assign(train_root, m_var, Input::Initializer(0.f, map_shapes[i.first]));
         map_assigns["v_assign"+string_index] = Assign(train_root, v_var, Input::Initializer(0.f, map_shapes[i.first]));
 
+        cout << "  Adam assigns " << index << endl;
+
         //passing a lot of values for specific elements in algorithm; can be played around with for starkly differing results
         //most important one it seems is learning_rate, which is why it is passed through an argument in our CreateOptimizationGraph
-        auto adam = ApplyAdam(train_root, i.second, m_var, v_var, 0.f, 0.f, learning_rate, 0.9f, 0.999f, 0.00000001f, {gradient_outputs[index]});
-        vector_out_gradients.push_back(adam.operation);
+        auto adam = ApplyAdam(train_root, i.second, m_var, v_var, 0.f, 0.f, learning_rate, 0.9f, 0.999f, 0.00000001f, grad_outputs[index]);
+
+        cout << "  Adam applied " << index << endl;
+
+        v_out_grads.push_back(adam.operation);
+
+        cout << "  Adam pushed back " << index << endl;
+
         index++;
     }
+    cout << "  Adam applied to all" << endl;
+
+
     return train_root.status();
+
 }
 
 //function which runs initializating operations in a session for the whole CNN
 Status CNN::Initialize()
 {
+    if(!train_root.ok())
+        return train_root.status();
     //get all operations to run in format suitable for ClientSession's run - vector
     //and run it on train scope
     vector<Output> ops_to_run;
@@ -469,6 +506,53 @@ Status CNN::Initialize()
     train_session = unique_ptr<ClientSession>(new ClientSession(train_root));
     TF_CHECK_OK(train_session->Run(ops_to_run, nullptr));
 
+    return Status::OK();
+}
+
+Status CNN::TrainCNN(Tensor& image_batch, Tensor& label_batch, vector<float>& results, float& loss)
+{
+    if(!train_root.ok())
+        return train_root.status();
+    
+    vector<Tensor> out_tensors;
+    //Inputs: batch of images, labels, drop rate and do not skip drop.
+    //Extract: Loss and result. Run also: Apply Adam commands
+    TF_CHECK_OK(train_session->Run({{input_batch_var, image_batch}, {input_labels_var, label_batch}, {drop_rate_var, 0.5f}, {skip_drop_var, 0.f}},
+                                {out_loss_var, out_classification}, v_out_grads, &out_tensors));
+    loss = out_tensors[0].scalar<float>()(0);
+    //both labels and results are shaped [20, 1]
+    auto mat1 = label_batch.matrix<float>();
+    auto mat2 = out_tensors[1].matrix<float>();
+    for(int i = 0; i < mat1.dimension(0); i++)
+        results.push_back((fabs(mat2(i, 0) - mat1(i, 0)) > 0.5f)? 0 : 1);
+    return Status::OK();
+}
+
+Status CNN::ValidateCNN(Tensor& image_batch, Tensor& label_batch, vector<float>& results)
+{
+    if(!train_root.ok())
+        return train_root.status();
+    
+    vector<Tensor> out_tensors;
+    //Inputs: batch of images, drop rate 1 and skip drop.
+    TF_CHECK_OK(train_session->Run({{input_batch_var, image_batch}, {drop_rate_var, 1.f}, {skip_drop_var, 1.f}}, {out_classification}, &out_tensors));
+    auto mat1 = label_batch.matrix<float>();
+    auto mat2 = out_tensors[0].matrix<float>();
+    for(int i = 0; i < mat1.dimension(0); i++)
+        results.push_back((fabs(mat2(i, 0) - mat1(i, 0)) > 0.5f)? 0 : 1);
+    return Status::OK();
+}
+
+Status CNN::Predict(Tensor& image, int& result)
+{
+    if(!train_root.ok())
+        return train_root.status();
+    
+    vector<Tensor> out_tensors;
+    //Inputs: image, drop rate 1 and skip drop.
+    TF_CHECK_OK(train_session->Run({{input_batch_var, image}, {drop_rate_var, 1.f}, {skip_drop_var, 1.f}}, {out_classification}, &out_tensors));
+    auto mat = out_tensors[0].matrix<float>();
+    result = (mat(0, 0) > 0.5f)? 1 : 0;
     return Status::OK();
 }
 
@@ -502,7 +586,8 @@ int main(int argc, const char * argv[])
     int image_side = 150;
     CNN model(image_side, image_side);
     cout << "Model initialized" << endl;
-    Status s = model.CreateGraphForImage(true);
+    Status s;
+    s = model.CreateGraphForImage(true);
     cout << "Graph for image created" << endl;
     TF_CHECK_OK(s);
 
@@ -512,30 +597,90 @@ int main(int argc, const char * argv[])
     vector<Tensor> image_batches, label_batches, valid_images, valid_labels;
     //Label: cat=0, dog=1
     s = model.ReadBatches(base_folder, {make_pair("cats", 0), make_pair("dogs", 1)}, batch_size, image_batches, label_batches);
-    cout << "Batches read" << endl;
+    cout << "Batches for train read" << endl;
     TF_CHECK_OK(s);
     
     base_folder = "/home/mordoksieznik/tensorflow/tensorflow/examples/CNN/data/validation";
     s = model.ReadBatches(base_folder, {make_pair("cats", 0), make_pair("dogs", 1)}, batch_size, valid_images, valid_labels);
+    cout << "Batches for validation read" << endl;
     TF_CHECK_OK(s);
 
     //CNN model
     int filter_side = 3;
     s = model.CreateGraphForCNN(filter_side, filter_side);
-    cout << "CNN graph created" << endl;
+    cout << "CNN graph for going forward created" << endl;
     TF_CHECK_OK(s);
 
     s = model.CreateOptimizationGraph(0.0002f);
     cout << "CNN graph with optimization created" << endl;
     TF_CHECK_OK(s);
 
-    //s = model.Initialize();
+    s = model.Initialize();
+    cout << "Model Initialized" << endl;
+    TF_CHECK_OK(s);
 
+    size_t num_batches = image_batches.size();
+    assert(num_batches == label_batches.size());
+    size_t valid_batches = valid_images.size();
+    assert(valid_batches == valid_labels.size());
+
+    int num_epochs = 3;
+    //Epoch / Step loops
+    for(int epoch = 0; epoch < num_epochs; epoch++)
+    {
+        cout << "Epoch " << epoch+1 << "/" << num_epochs << ":";
+        auto t1 = high_resolution_clock::now();
+        float loss_sum = 0;
+        float accuracy_sum = 0;
+        for(int b = 0; b < num_batches; b++)
+        {
+            vector<float> results;
+            float loss;
+            s = model.TrainCNN(image_batches[b], label_batches[b], results, loss);
+            loss_sum += loss;
+            accuracy_sum += accumulate(results.begin(), results.end(), 0.f) / results.size();
+            cout << ".";
+        }
+        cout << endl << "Validation:";
+        float validation_sum = 0;
+        for(int c = 0; c < valid_batches; c++)
+        {
+            vector<float> results;
+            s = model.ValidateCNN(valid_images[c], valid_labels[c], results);
+            validation_sum += accumulate(results.begin(), results.end(), 0.f) / results.size();
+            cout << ".";
+
+        }
+        auto t2 = high_resolution_clock::now();
+        cout << endl << "Time: " << duration_cast<seconds>(t2-t1).count() << " seconds ";
+        cout << "Loss: " << loss_sum/num_batches << " Results accuracy: " << accuracy_sum/num_batches << " Validation accuracy: " << validation_sum/valid_batches << endl;
+    }
+    //testing the model
+    s = model.CreateGraphForImage(false);//rebuild the model without unstacking
+    TF_CHECK_OK(s);
+    base_folder = "/home/mordoksieznik/tensorflow/tensorflow/examples/CNN/data/train";
+    vector<pair<Tensor, float>> all_files_tensors;
+    s = model.ReadFileTensors(base_folder, {make_pair("cats", 0), make_pair("dogs", 1)}, all_files_tensors);
+    TF_CHECK_OK(s);
+    //test a few images
+    int count_images = 20;
+    int count_success = 0;
+    for(int i = 0; i < count_images; i++)
+    {
+        pair<Tensor, float> p = all_files_tensors[i];
+        int result;
+        s = model.Predict(p.first, result);
+        TF_CHECK_OK(s);
+        cout << "Test number: " << i + 1 << " predicted: " << result << " actual is: " << p.second << endl;
+        if(result == (int)p.second)
+            count_success++;
+    }
+    cout << "total successes: " << count_success << " out of " << count_images << endl;
 
 
     //uncomment to create a graph visualisation using TensorBoard 
-    model.writeGraphForTensorboard(model.net_root, "cnn");
-    cout << "Graph for Tensorboard drawn" << endl;
+    //model.writeGraphForTensorboard(model.net_root, "cnn");
+    //cout << "Graph for Tensorboard drawn" << endl;
 
 
     return 0;

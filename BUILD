@@ -1,7 +1,5 @@
 load("//tensorflow:tensorflow.bzl", "tf_cc_binary")
 
-
-
 tf_cc_binary(
     name = "my_project",
     srcs = ["CNN.cc", "CNN.h"],
@@ -9,6 +7,7 @@ tf_cc_binary(
             "//tensorflow/cc:cc_ops",
             "//tensorflow/cc:client_session",
             "//tensorflow/cc:gradients",
+            "//tensorflow/cc:grad_ops",
             "//tensorflow/core/kernels:image_ops",
             "//tensorflow/core:core_cpu",
             "//tensorflow/core:framework",

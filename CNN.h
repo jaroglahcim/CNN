@@ -1,10 +1,11 @@
 #include <iostream>
 #include <map>
 #include <fstream>
+#include <chrono>
 #include "tensorflow/cc/client/client_session.h"
 #include "tensorflow/cc/ops/standard_ops.h"
 #include "tensorflow/cc/framework/gradients.h"
-//#include "gradients.h"
+#include "tensorflow/cc/ops/nn_ops.h"
 #include "tensorflow/cc/ops/image_ops.h"
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/public/session.h"
@@ -26,8 +27,8 @@ class CNN
         Output input_batch_var, drop_rate_var, skip_drop_var, out_classification;
 
         Output input_labels_var, out_loss_var;
-        vector<Output> vector_weights_biases;
-        vector<Operation> vector_out_gradients;
+        vector<Output> v_weights_biases;
+        vector<Operation> v_out_grads;
         unique_ptr<ClientSession> train_session;
 
     public:
@@ -47,6 +48,10 @@ class CNN
         Status CreateGraphForCNN(int filter_height, int filter_width);
         Status CreateOptimizationGraph(float learning_rate);
         Status Initialize();
+        Status TrainCNN(Tensor& image_batch, Tensor& label_batch, vector<float>& results, float& loss);
+        Status ValidateCNN(Tensor& image_batch, Tensor& label_batch, vector<float>& results);
+        Status Predict(Tensor& image, int& result);
+
         
         Status writeGraphForTensorboard(Scope scope, string s);
 };
