@@ -32,9 +32,9 @@ class CNN
         unique_ptr<ClientSession> train_session;
 
     public:
-        Scope image_root, net_root, train_root;
+        Scope image_root, net_root;
 
-        CNN(int h, int w, int mean=0, int s=255) : image_root(Scope::NewRootScope()), net_root(Scope::NewRootScope()), train_root(Scope::NewRootScope()),
+        CNN(int h, int w, int mean=0, int s=255) : image_root(Scope::NewRootScope()), net_root(Scope::NewRootScope()),
                                                    image_height(h), image_width(w), image_mean(mean), image_std(s){};
         Status CreateGraphForImage(bool unstack);
         Status ReadTensorFromImageFile(const string& file_name, Tensor& out_tensor);

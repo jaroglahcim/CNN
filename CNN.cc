@@ -118,7 +118,7 @@ Status CNN::ReadFileTensors(string& base_folder_path, vector<pair<string, float>
     bool shuffle = false;
 
     //for each image category
-    for (pair<string, float> pair : subfolder_label_pairs)
+    for (auto pair : subfolder_label_pairs)
     {
 
         //JoinPath - API function for concatenating path strings, subfolder_path <- full path to subfolder
@@ -368,7 +368,6 @@ Status CNN::CreateGraphForCNN(int filter_height, int filter_width){
     new_width = ceil((float)new_width / 2);
     new_height = ceil((float)new_height / 2);
 
-
     //Flatten
     //reshaping data so that it will be stored in a 2d tensor - batch number and data, suitable for use in dense layers
     Scope flatten = net_root.NewSubScope("flat_layer");
@@ -420,15 +419,14 @@ Status CNN::CreateGraphForCNN(int filter_height, int filter_width){
 Status CNN::CreateOptimizationGraph(float learning_rate)
 {
     //Placeholder for labels
-    input_labels_var = Placeholder(train_root.WithOpName("inputL"), DT_FLOAT);
+    input_labels_var = Placeholder(net_root.WithOpName("inputL"), DT_FLOAT);
 
     //Adding to graph operation for loss calculation - mean square difference
     //cross entropy and SoftmaxCrossEntropyWithLogits function could be better, but not know how to use
     //in out_classification are our results from previous classification batch 
-    Scope scope_loss = train_root.NewSubScope("Loss_scope");
+    Scope scope_loss = net_root.NewSubScope("Loss_scope");
     out_loss_var = Mean(scope_loss.WithOpName("Loss"), SquaredDifference(scope_loss, out_classification, input_labels_var), {0});
     TF_CHECK_OK(scope_loss.status());
-    cout << "  Mean calculated" << endl;
 
     //AddSymbolicGradients takes graph from scope, adds all relevant backpropagating operations and returns a vector
     //of gradient of same size as number of weights and biases, i.e. calculates gradient
@@ -437,26 +435,16 @@ Status CNN::CreateOptimizationGraph(float learning_rate)
     //fourth arg: result - vector of gradient for all weights and biases
     for(pair<string, Output> i: map_vars){
         v_weights_biases.push_back(i.second);
-        cout << i.first << endl;
     }
-    cout << "  vector_weights_biases pushed back" << endl;
     vector<Output> grad_outputs;
  
 
-    TF_CHECK_OK(AddSymbolicGradients(train_root, {out_loss_var}, v_weights_biases, &grad_outputs));
-
-    cout << "  Symbolic gradients added" << endl;
-
+    TF_CHECK_OK(AddSymbolicGradients(net_root, {out_loss_var}, v_weights_biases, &grad_outputs));
 
     // vector<Output> loss_vector, gradient_outputs;
-    // auto scewl = SoftmaxCrossEntropyWithLogits(train_root, out_classification, input_labels_var);
-
-    // cout << "  SCEWCL performed" << endl;
-
+    // auto scewl = SoftmaxCrossEntropyWithLogits(net_root, out_classification, input_labels_var);
     // loss_vector = {scewl.loss};
-    // cout << "  loss_vector przypisan" << endl;
     // gradient_outputs = {scewl.backprop};
-    // cout << "  gradient_outputs przypisan" << endl;
 
     //applying Adam optimization algorithm with calculated gradient for each weight/bias
     int index = 0;  
@@ -464,46 +452,32 @@ Status CNN::CreateOptimizationGraph(float learning_rate)
     {
         string string_index = to_string(index);
         //variable names as are used in Adam algorithm, have to be Variable()
-        auto m_var = Variable(train_root, map_shapes[i.first], DT_FLOAT);
-        auto v_var = Variable(train_root, map_shapes[i.first], DT_FLOAT);
+        auto m_var = Variable(net_root, map_shapes[i.first], DT_FLOAT);
+        auto v_var = Variable(net_root, map_shapes[i.first], DT_FLOAT);
 
-        cout << "  Adam variables " << index << endl;
-
-        map_assigns["m_assign"+string_index] = Assign(train_root, m_var, Input::Initializer(0.f, map_shapes[i.first]));
-        map_assigns["v_assign"+string_index] = Assign(train_root, v_var, Input::Initializer(0.f, map_shapes[i.first]));
-
-        cout << "  Adam assigns " << index << endl;
-
+        map_assigns["m_assign"+string_index] = Assign(net_root, m_var, Input::Initializer(0.f, map_shapes[i.first]));
+        map_assigns["v_assign"+string_index] = Assign(net_root, v_var, Input::Initializer(0.f, map_shapes[i.first]));
         //passing a lot of values for specific elements in algorithm; can be played around with for starkly differing results
         //most important one it seems is learning_rate, which is why it is passed through an argument in our CreateOptimizationGraph
-        auto adam = ApplyAdam(train_root, i.second, m_var, v_var, 0.f, 0.f, learning_rate, 0.9f, 0.999f, 0.00000001f, grad_outputs[index]);
-
-        cout << "  Adam applied " << index << endl;
-
+        auto adam = ApplyAdam(net_root, i.second, m_var, v_var, 0.f, 0.f, learning_rate, 0.9f, 0.999f, 0.00000001f, grad_outputs[index]);
         v_out_grads.push_back(adam.operation);
-
-        cout << "  Adam pushed back " << index << endl;
-
         index++;
     }
-    cout << "  Adam applied to all" << endl;
-
-
-    return train_root.status();
+    return net_root.status();
 
 }
 
 //function which runs initializating operations in a session for the whole CNN
 Status CNN::Initialize()
 {
-    if(!train_root.ok())
-        return train_root.status();
+    if(!net_root.ok())
+        return net_root.status();
     //get all operations to run in format suitable for ClientSession's run - vector
     //and run it on train scope
     vector<Output> ops_to_run;
     for (auto i: map_assigns)
         ops_to_run.push_back(i.second);
-    train_session = unique_ptr<ClientSession>(new ClientSession(train_root));
+    train_session = unique_ptr<ClientSession>(new ClientSession(net_root));
     TF_CHECK_OK(train_session->Run(ops_to_run, nullptr));
 
     return Status::OK();
@@ -511,8 +485,8 @@ Status CNN::Initialize()
 
 Status CNN::TrainCNN(Tensor& image_batch, Tensor& label_batch, vector<float>& results, float& loss)
 {
-    if(!train_root.ok())
-        return train_root.status();
+    if(!net_root.ok())
+        return net_root.status();
     
     vector<Tensor> out_tensors;
     //Inputs: batch of images, labels, drop rate and do not skip drop.
@@ -530,8 +504,8 @@ Status CNN::TrainCNN(Tensor& image_batch, Tensor& label_batch, vector<float>& re
 
 Status CNN::ValidateCNN(Tensor& image_batch, Tensor& label_batch, vector<float>& results)
 {
-    if(!train_root.ok())
-        return train_root.status();
+    if(!net_root.ok())
+        return net_root.status();
     
     vector<Tensor> out_tensors;
     //Inputs: batch of images, drop rate 1 and skip drop.
@@ -545,8 +519,8 @@ Status CNN::ValidateCNN(Tensor& image_batch, Tensor& label_batch, vector<float>&
 
 Status CNN::Predict(Tensor& image, int& result)
 {
-    if(!train_root.ok())
-        return train_root.status();
+    if(!net_root.ok())
+        return net_root.status();
     
     vector<Tensor> out_tensors;
     //Inputs: image, drop rate 1 and skip drop.
@@ -615,6 +589,10 @@ int main(int argc, const char * argv[])
     cout << "CNN graph with optimization created" << endl;
     TF_CHECK_OK(s);
 
+    //uncomment to create a graph visualisation using TensorBoard 
+    model.writeGraphForTensorboard(model.net_root, "cnn");
+    cout << "Graph for Tensorboard drawn" << endl;
+
     s = model.Initialize();
     cout << "Model Initialized" << endl;
     TF_CHECK_OK(s);
@@ -624,7 +602,7 @@ int main(int argc, const char * argv[])
     size_t valid_batches = valid_images.size();
     assert(valid_batches == valid_labels.size());
 
-    int num_epochs = 3;
+    int num_epochs = 5;
     //Epoch / Step loops
     for(int epoch = 0; epoch < num_epochs; epoch++)
     {
@@ -676,12 +654,6 @@ int main(int argc, const char * argv[])
             count_success++;
     }
     cout << "total successes: " << count_success << " out of " << count_images << endl;
-
-
-    //uncomment to create a graph visualisation using TensorBoard 
-    //model.writeGraphForTensorboard(model.net_root, "cnn");
-    //cout << "Graph for Tensorboard drawn" << endl;
-
 
     return 0;
 }
