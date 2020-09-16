@@ -324,7 +324,7 @@ Input CNN::AddDenseLayer(string index, Scope scope, int in_units, int out_units,
 
 
 //function which creates full CNN architecture graph (without backpropagation
-//4 Convergence Layers with Maxpooling and 3 Dense Layers (2 with ReLU activation, last with sigmoid function) with Dropout (for dense layers obv)  
+//4 Convolution Layers with Maxpooling and 3 Dense Layers (2 with ReLU activation, last with sigmoid function) with Dropout (for dense layers obv)  
 Status CNN::CreateGraphForCNN(int filter_height, int filter_width){
     //input batch of images, it's size in our example is batch_sizex150x150x3
     //again starting with a placeholder - we again keep this variable stored in object, so as to avoid trouble with passing it later 
