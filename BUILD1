@@ -2,7 +2,7 @@ load("//tensorflow:tensorflow.bzl", "tf_cc_binary")
 
 tf_cc_binary(
     name = "my_project1",
-    srcs = ["main.cc"],
+    srcs = ["part1.cc"],
     deps = ["//tensorflow/core:tensorflow",
             "//tensorflow/cc:cc_ops",
             "//tensorflow/cc:client_session",

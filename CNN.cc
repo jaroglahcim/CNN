@@ -4,7 +4,7 @@ using namespace tensorflow;
 using namespace tensorflow::ops;
 using namespace chrono;
 
-//                                                     LOADING IMAGES FUNCTIONS
+//                                                              LOADING IMAGES 
 
 //creates graph of operations for an image, does not execute them
 //bool value should be false if done for one image, true if for loading a batch
@@ -233,7 +233,9 @@ Status CNN::ReadBatches(string& base_folder_path, vector<pair<string, float>> su
 //max pooling using a 2x2 window and stride 2, initialized with Xavier initialization function and 0 as bias
 //first arg: index string to distinguish between layers
 //second arg: subscope - since layers are a composition of operations in low lever API, a subscope is created for each layer
-//?
+//third and fourth arg: number of channels in data tensor in input and expected output (different layers keep different number of channels)
+//fifth and sixth arg: height and width of filters, it's self-explanatory
+//seventh arg: input data tensor
 Input CNN::AddConvolutionLayer(string index, Scope scope, int in_channels, int out_channels, int filter_height, int filter_width, Input input)
 {
     //create a TensorShape denoted by its number of dimensions and size for each dimension
@@ -268,13 +270,17 @@ Input CNN::AddConvolutionLayer(string index, Scope scope, int in_channels, int o
     return MaxPool(scope.WithOpName("Pool"), relu, {1, 2, 2, 1}, {1, 2, 2, 1}, "SAME");
 }
 
-//function which returns initialization according to Xavier method ?
+//function which returns initialization according to Xavier method
+//filter_height and filter_width have default value of 0, as defined in CNN.h; thus, in dense layers we skip these arguments and
+//value of 0 suggests to us that it is a dense layer, no more info needed (since conv layer with 0 size filters == without filters doesn't make much sense)
+//Xavier (Glorot's) initialization sets a layer's weights to values chosen from a random uniform distribution that's bound between [-std, +std],
+//where std = sqrt(6)/sqrt(incoming_connections+outcoming_connections) 
 Input CNN::XavierInitialization (Scope scope, int in_channels, int out_channels, int filter_height, int filter_width)
 {
     float std;
     Tensor t;
     if(filter_height == 0)
-    { //Dense
+    { //Dense Layer, 2d Tensors, number of connections equal to sum of input and output channels
         std = sqrt(6.f/(in_channels+out_channels));
         Tensor ts(DT_INT64, {2});
         auto v = ts.vec<int64>();
@@ -283,7 +289,7 @@ Input CNN::XavierInitialization (Scope scope, int in_channels, int out_channels,
         t = ts;
     }
     else
-    { //Conv
+    { //Convolutional Layer, 4d tensors, number of connections in each direction is equal to all pixels of a filter times number of channels 
         std = sqrt(6.f/(filter_height*filter_width*(in_channels+out_channels)));
         Tensor ts(DT_INT64, {4});
         auto v = ts.vec<int64>();
@@ -293,7 +299,9 @@ Input CNN::XavierInitialization (Scope scope, int in_channels, int out_channels,
         v(3) = out_channels;
         t = ts;
     }
+    //uniform distribution in range of [0, 1]
     auto rand = RandomUniform(scope, t, DT_FLOAT);
+    //changing range first to [-0.5, 0.5] with Sub and then to [-std, std] with Multiply
     return Multiply(scope, Sub(scope, rand, 0.5f), std*2.f);
 }
 
@@ -419,15 +427,15 @@ Status CNN::CreateGraphForCNN(int filter_height, int filter_width){
 //adds nodes to neural net graph created in CreateGraphForCNN function to "optimize it" - adds backpropagation to it
 //regular mean square difference is used for loss calculation and Adam Optimization Algorithm is used for optimization
 //(instead of gradient descent or whatever)
-//first arg: IMPORTANT pass number for wildly differing results, one that worked well is 0.0001    
+//first arg: IMPORTANT pass number for wildly differing results, one that worked well is 0.0002    
 Status CNN::CreateOptimizationGraph(float learning_rate)
 {
     //Placeholder for labels
     input_labels_var = Placeholder(net_root.WithOpName("inputL"), DT_FLOAT);
 
     //Adding to graph operation for loss calculation - mean square difference
-    //cross entropy and SoftmaxCrossEntropyWithLogits function could be better, but not know how to use
     //in out_classification are our results from previous classification batch 
+    //SoftmaxCrossEntropyWithLogits function could be better, but my attempt doesn't work and i can't find examples of it
     Scope scope_loss = net_root.NewSubScope("Loss_scope");
     out_loss_var = Mean(scope_loss.WithOpName("Loss"), SquaredDifference(scope_loss, out_classification, input_labels_var), {0});
     TF_CHECK_OK(scope_loss.status());
@@ -441,14 +449,7 @@ Status CNN::CreateOptimizationGraph(float learning_rate)
         v_weights_biases.push_back(i.second);
     }
     vector<Output> grad_outputs;
- 
-
     TF_CHECK_OK(AddSymbolicGradients(net_root, {out_loss_var}, v_weights_biases, &grad_outputs));
-
-    // vector<Output> loss_vector, gradient_outputs;
-    // auto scewl = SoftmaxCrossEntropyWithLogits(net_root, out_classification, input_labels_var);
-    // loss_vector = {scewl.loss};
-    // gradient_outputs = {scewl.backprop};
 
     //applying Adam optimization algorithm with calculated gradient for each weight/bias
     int index = 0;  
@@ -607,7 +608,7 @@ int main(int argc, const char * argv[])
     cout << "CNN graph for going forward created" << endl;
     TF_CHECK_OK(s);
     //backpropagation graph creation
-    s = model.CreateOptimizationGraph(0.0002f);
+    s = model.CreateOptimizationGraph(0.0001f);
     cout << "CNN graph with optimization created" << endl;
     TF_CHECK_OK(s);
 
